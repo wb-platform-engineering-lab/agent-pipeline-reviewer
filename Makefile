@@ -1,7 +1,8 @@
 .PHONY: install demo-bad demo-good demo-bad-ai demo-good-ai test clean
 
 install:
-	pip install -e .
+	python3 -m venv .venv
+	.venv/bin/pip install -e .
 
 demo-bad:
 	pipeline-review examples/bad_pipeline --checks-only

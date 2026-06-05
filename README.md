@@ -8,10 +8,26 @@ It runs 21 deterministic checks across the four DORA pillars (Lead Time, Change 
 
 ## Quick start
 
+Requires **Python 3.10+**. The recommended install method is `pipx`, which manages an isolated virtualenv automatically:
+
 ```bash
-pip install -e .
+# Install pipx if needed
+brew install pipx && pipx ensurepath
+
+# Install the tool
+pipx install -e .
+
 pipeline-review ./path/to/repo --checks-only    # no API key required
 pipeline-review ./path/to/repo                  # full AI report (requires ANTHROPIC_API_KEY)
+```
+
+**Alternative — virtualenv:**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pipeline-review ./path/to/repo --checks-only
 ```
 
 ---
@@ -179,7 +195,7 @@ Every run produces:
 ## Development
 
 ```bash
-make install       # pip install -e .
+make install       # creates .venv and installs the package (requires Python 3.10+)
 make demo-bad      # run checks against examples/bad_pipeline
 make demo-good     # run checks against examples/good_pipeline
 make demo-bad-ai   # full AI review of bad_pipeline (needs ANTHROPIC_API_KEY)
