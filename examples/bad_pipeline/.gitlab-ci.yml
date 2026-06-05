@@ -1,0 +1,80 @@
+# bad_pipeline/.gitlab-ci.yml
+# Violates all 21 checks — used for testing and demonstration
+
+stages:
+  - build
+  - test
+  - deploy
+  - release
+
+# P1-002: no global image tag
+image: node
+
+variables:
+  APP_ENV: production
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+build:
+  stage: build
+  # P1-001: npm install with no cache
+  # P1-003: no interruptible
+  # P1-004: artifacts with no expire_in
+  script:
+    - npm install
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+test:
+  stage: test
+  # P1-006: single test job, no parallel matrix
+  # P2-004: allow_failure true on a test job
+  # P1-002: latest image
+  image: node:latest
+  script:
+    - npm install
+    - npm test
+  allow_failure: true
+
+# No lint job (P2-006)
+# No security scan (P2-005)
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+
+deploy_staging:
+  stage: deploy
+  # P3-001: all deploys are manual
+  # P3-004: no environment defined
+  # P4-003: no retry
+  # P4-005: no timeout
+  # P2-002: uses needs: bypassing test job
+  when: manual
+  needs:
+    - build
+  script:
+    - echo "Deploying to staging..."
+    - ./deploy.sh staging
+
+deploy_production:
+  stage: release
+  # P3-001: manual
+  # P4-001: no rollback
+  # P4-003: no retry
+  # P4-005: no timeout
+  when: manual
+  needs:
+    - build
+  script:
+    - echo "Deploying to production..."
+    - ./deploy.sh production
+
+# No smoke test after deploy (P2-003)
+# No rollback job (P4-001)
+# No on_failure notification (P4-002)
+# No MR pipeline rules (P3-002)
+# No push-to-main trigger (P3-003)
+# No environment URL (P4-004)

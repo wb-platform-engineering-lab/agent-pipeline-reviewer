@@ -1,0 +1,188 @@
+# good_pipeline/.gitlab-ci.yml
+# Passes all 21 checks — reference implementation
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+  - verify
+
+default:
+  image: node:20.11-alpine
+  interruptible: true
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .npm/
+
+variables:
+  NODE_ENV: production
+  FF_USE_FASTZIP: "true"
+
+# ── Workflow rules ─────────────────────────────────────────────────────────────
+# P3-002: MR pipelines + P3-003: push to main
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH =~ /^release\//'
+
+# ── Lint stage ────────────────────────────────────────────────────────────────
+# P2-006: linting job present
+
+lint:
+  stage: lint
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm run format:check
+  artifacts:
+    reports:
+      junit: lint-report.xml
+    expire_in: 1 week
+
+# ── Test stage ────────────────────────────────────────────────────────────────
+# P2-001: test job present
+# P1-006: parallel matrix for test splitting
+
+test:
+  stage: test
+  parallel: 4
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm test -- --shard=$CI_NODE_INDEX/$CI_NODE_TOTAL --reporter=junit
+  artifacts:
+    reports:
+      junit: test-results.xml
+    expire_in: 1 week
+  coverage: '/Statements\s*:\s*(\d+\.?\d*)%/'
+
+# P2-005: security scanning
+
+sast:
+  stage: test
+  image: semgrep/semgrep:latest
+  script:
+    - semgrep --config=auto --junit-xml > semgrep-report.xml
+  artifacts:
+    reports:
+      junit: semgrep-report.xml
+    expire_in: 1 week
+  allow_failure: false
+
+dependency_scan:
+  stage: test
+  script:
+    - npm audit --audit-level=high
+  allow_failure: false
+
+# ── Build stage ───────────────────────────────────────────────────────────────
+# P1-004: expire_in on artifacts
+# P1-005: uses needs: to start as soon as lint passes
+
+build:
+  stage: build
+  needs:
+    - lint
+    - job: test
+      artifacts: true
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week
+
+# ── Deploy stage ──────────────────────────────────────────────────────────────
+# P3-001: staging is automatic, prod is manual (mixed = acceptable)
+# P3-004: environment defined with URL
+# P4-003: retry configured (via default)
+# P4-005: timeout defined
+
+deploy_staging:
+  stage: deploy
+  needs:
+    - build
+  script:
+    - ./deploy.sh staging
+  environment:
+    name: staging
+    url: https://staging.example.com
+    on_stop: stop_staging
+  timeout: 10 minutes
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stop_staging:
+  stage: deploy
+  script:
+    - ./teardown.sh staging
+  environment:
+    name: staging
+    action: stop
+  when: manual
+
+deploy_production:
+  stage: deploy
+  needs:
+    - build
+    - test
+  script:
+    - ./deploy.sh production
+  environment:
+    name: production
+    url: https://example.com
+    on_stop: rollback_production
+  timeout: 15 minutes
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# P4-001: rollback job defined
+
+rollback_production:
+  stage: deploy
+  script:
+    - ./rollback.sh production
+  environment:
+    name: production
+    action: stop
+  when: manual
+
+# ── Verify stage ──────────────────────────────────────────────────────────────
+# P2-003: smoke test after deploy
+
+smoke_test:
+  stage: verify
+  needs:
+    - deploy_staging
+  script:
+    - curl -f https://staging.example.com/health
+    - npm run test:smoke -- --url https://staging.example.com
+  timeout: 5 minutes
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# P4-002: failure notification
+
+notify_failure:
+  stage: verify
+  when: on_failure
+  script:
+    - |
+      curl -X POST $SLACK_WEBHOOK_URL \
+        -H 'Content-type: application/json' \
+        --data "{\"text\":\"Pipeline failed on ${CI_COMMIT_BRANCH} — ${CI_PIPELINE_URL}\"}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_failure
